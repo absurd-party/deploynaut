@@ -34,6 +34,11 @@ const signatureApprovalFixture = fs.readFileSync(
 	'utf-8',
 );
 
+const orgApprovalFixture = fs.readFileSync(
+	path.join(__dirname, '../fixtures/policy-configs/org-approval-only.yml'),
+	'utf-8',
+);
+
 // Test fixtures
 interface TestFixture {
 	deployment_protection_rule: {
@@ -247,6 +252,62 @@ describe('Deployment Protection Rule Handler', () => {
 			.reply(200, [
 				{
 					login: 'maintainer-user',
+				},
+			])
+			.post(
+				'/repos/test-org/test-repo/actions/runs/123/deployment_protection_rule',
+			)
+			.reply(200);
+
+		await probot.receive({
+			name: 'deployment_protection_rule',
+			payload: testFixtures.deployment_protection_rule,
+		});
+
+		expect(mock.pendingMocks()).toStrictEqual([]);
+	});
+
+	test('approves deployment with organization member review', async () => {
+		// Override the beforeEach setup to use org-approval fixture
+		nock.cleanAll();
+		nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/contents/.github%2Fdeploynaut.yml')
+			.reply(200, orgApprovalFixture)
+			.post('/app/installations/12345678/access_tokens')
+			.reply(200, { token: 'test', permissions: { issues: 'write' } });
+
+		const mock = nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/commits/test-sha')
+			.reply(200, {
+				sha: 'test-sha',
+				author: { id: 123, login: 'unauthorized-user' },
+				committer: { id: 123, login: 'unauthorized-user' },
+				commit: {
+					verification: { verified: false, reason: 'unsigned' },
+				},
+			})
+			.get('/repos/test-org/test-repo/pulls/1/reviews')
+			.reply(200, [
+				{
+					user: { id: 456, login: 'org-member-user' },
+					state: 'APPROVED',
+					body: 'LGTM',
+					commit_id: 'test-sha',
+					html_url: 'https://github.com/test-org/test-repo/pull/1#review',
+					submitted_at: '2023-01-01T00:00:00Z',
+				},
+			])
+			.get('/repos/test-org/test-repo/pulls/1/commits')
+			.reply(200, [
+				{
+					sha: 'test-sha',
+					author: { id: 123, login: 'unauthorized-user' },
+				},
+			])
+			.get('/orgs/test-org/members')
+			.reply(200, [
+				{
+					login: 'org-member-user',
 				},
 			])
 			.post(

@@ -143,6 +143,11 @@ const deployCommentFixture = fs.readFileSync(
 	'utf-8',
 );
 
+const orgApprovalFixture = fs.readFileSync(
+	path.join(__dirname, '../fixtures/policy-configs/org-approval-only.yml'),
+	'utf-8',
+);
+
 describe('Pull Request Review Handler', () => {
 	let probot: any;
 
@@ -239,6 +244,59 @@ describe('Pull Request Review Handler', () => {
 					submitted_at: undefined,
 				},
 			},
+		});
+
+		expect(mock.pendingMocks()).toStrictEqual([]);
+	});
+
+	test('approves workflow when organization member review state is APPROVED', async () => {
+		// Use org approval fixture for organization member test
+		nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/contents/.github%2Fdeploynaut.yml')
+			.reply(200, orgApprovalFixture)
+			.post('/app/installations/12345678/access_tokens')
+			.reply(200, { token: 'test', permissions: { issues: 'write' } });
+
+		const mock = nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/commits/test-sha')
+			.reply(200, testFixtures.commit)
+			.get('/repos/test-org/test-repo/actions/runs')
+			.query(true)
+			.reply(200, {
+				workflow_runs: [testFixtures.workflow_run],
+			})
+			.get('/repos/test-org/test-repo/actions/runs/1234/pending_deployments')
+			.reply(200, [
+				{
+					environment: { name: 'test' },
+					current_user_can_approve: true,
+				},
+			])
+			.post(
+				'/repos/test-org/test-repo/actions/runs/1234/deployment_protection_rule',
+			)
+			.reply(200)
+			.get('/repos/test-org/test-repo/pulls/123/commits')
+			.reply(200, [testFixtures.commit])
+			.get('/orgs/test-org/members')
+			.times(2)
+			.reply(200, [
+				{
+					login: 'test-reviewer',
+				},
+			]);
+
+		const payload = {
+			...testFixtures.pull_request_review,
+			review: {
+				...testFixtures.pull_request_review.review,
+				state: 'APPROVED',
+			},
+		};
+
+		await probot.receive({
+			name: 'pull_request_review',
+			payload,
 		});
 
 		expect(mock.pendingMocks()).toStrictEqual([]);

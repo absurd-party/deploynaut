@@ -25,6 +25,7 @@ describe('PolicyEvaluator', () => {
 			},
 		},
 		log: {
+			debug: vi.fn(),
 			info: vi.fn(),
 			warn: vi.fn(),
 			error: vi.fn(),
@@ -962,7 +963,7 @@ describe('PolicyEvaluator', () => {
 
 		const evaluator = new PolicyEvaluator(config, mockGithubContext);
 		await expect(() => evaluator.evaluate(context)).rejects.toThrow(
-			'Pattern "/[/" is not a valid regex',
+			'Pattern "/[/" is not valid: SyntaxError: Invalid regular expression: /[/: Unterminated character class',
 		);
 	});
 
@@ -1100,11 +1101,136 @@ describe('PolicyEvaluator', () => {
 		expect(await evaluator.evaluate(context)).toBe(false);
 	});
 
+	describe('API error handling', () => {
+		test('handles API errors gracefully and allows other rules to pass', async () => {
+			// Mock one function to fail and another to succeed
+			vi.mocked(client.listTeamMembers).mockRejectedValue(
+				new Error('Team not found'),
+			);
+			vi.mocked(client.listOrganizationMembers).mockResolvedValue([
+				{ login: 'test-reviewer', id: 789 } as any,
+			]);
+
+			const config: PolicyConfig = {
+				...baseConfig,
+				policy: {
+					approval: ['team-rule', 'org-rule'],
+				},
+				approval_rules: [
+					{
+						name: 'team-rule',
+						requires: {
+							count: 1,
+							teams: ['nonexistent-org/nonexistent-team'],
+						},
+						methods: {
+							github_review: true,
+						},
+					},
+					{
+						name: 'org-rule',
+						requires: {
+							count: 1,
+							organizations: ['test-org'],
+						},
+						methods: {
+							github_review: true,
+						},
+					},
+				],
+			};
+
+			const context: PolicyContext = {
+				...baseContext,
+				reviews: [
+					{
+						id: 1,
+						user: {
+							id: 789,
+							login: 'test-reviewer',
+						},
+						state: 'APPROVED',
+						commit_id: 'test-sha',
+						submitted_at: '2021-01-01T00:00:00Z',
+					},
+				],
+			};
+
+			const evaluator = new PolicyEvaluator(config, mockGithubContext);
+			const result = await evaluator.evaluate(context);
+
+			// Should pass because the org-rule passes even though team-rule fails
+			expect(result).toBe(true);
+		});
+
+		test('handles both API errors and continues evaluation', async () => {
+			// Mock both functions to fail
+			vi.mocked(client.listTeamMembers).mockRejectedValue(
+				new Error('Team not found'),
+			);
+			vi.mocked(client.listOrganizationMembers).mockRejectedValue(
+				new Error('Org not found'),
+			);
+
+			const config: PolicyConfig = {
+				...baseConfig,
+				policy: {
+					approval: ['team-rule', 'user-rule'],
+				},
+				approval_rules: [
+					{
+						name: 'team-rule',
+						requires: {
+							count: 1,
+							teams: ['nonexistent-org/nonexistent-team'],
+						},
+						methods: {
+							github_review: true,
+						},
+					},
+					{
+						name: 'user-rule',
+						requires: {
+							count: 1,
+							users: ['test-reviewer'],
+						},
+						methods: {
+							github_review: true,
+						},
+					},
+				],
+			};
+
+			const context: PolicyContext = {
+				...baseContext,
+				reviews: [
+					{
+						id: 1,
+						user: {
+							id: 789,
+							login: 'test-reviewer',
+						},
+						state: 'APPROVED',
+						commit_id: 'test-sha',
+						submitted_at: '2021-01-01T00:00:00Z',
+					},
+				],
+			};
+
+			const evaluator = new PolicyEvaluator(config, mockGithubContext);
+			const result = await evaluator.evaluate(context);
+
+			// Should pass because the user-rule passes even though team-rule fails
+			expect(result).toBe(true);
+		});
+	});
+
 	describe('signature validation', () => {
 		let mockLogger: any;
 
 		beforeEach(() => {
 			mockLogger = {
+				debug: vi.fn(),
 				info: vi.fn(),
 				warn: vi.fn(),
 				error: vi.fn(),

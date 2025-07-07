@@ -8,13 +8,13 @@ import type {
 	ApprovalRequirement,
 	ApprovalMethods,
 } from './types.js';
-import { minimatch } from 'minimatch';
 import { listTeamMembers, listOrganizationMembers } from '../client.js';
 
 /**
  * Logger interface for outputting evaluation messages
  */
 interface Logger {
+	debug(message: string): void;
 	info(message: string): void;
 	warn(message: string): void;
 	error(message: string): void;
@@ -178,7 +178,7 @@ export class PolicyEvaluator {
 	private async evaluateNamedRule(
 		rule: NamedApprovalRule,
 	): Promise<RuleResult> {
-		this.logger.info(`Evaluating rule: ${JSON.stringify(rule)}`);
+		this.logger.debug(`Evaluating rule: ${JSON.stringify(rule)}`);
 
 		// First check if rule conditions are met
 		if (rule.if && !(await this.evaluateConditions(rule.if))) {
@@ -300,20 +300,25 @@ export class PolicyEvaluator {
 
 			// Check if review is for the current deployment
 			if (deploymentSha && review.commit_id !== deploymentSha) {
-				this.logger.warn(
-					`Review for commit "${review.commit_id}" is not for the current deployment`,
+				this.logger.info(
+					`Review ${review.id} is not for the current deployment`,
 				);
 				return false;
 			}
 
+			this.logger.info(`Review ${review.id} is for the current deployment`);
+
 			// Check if reviewer is not the author or committer
 			for (const commit of commits) {
-				if (
-					review.user.id === commit.author?.id ||
-					review.user.id === commit.committer?.id
-				) {
+				if (review.user.id === commit.author?.id) {
 					this.logger.warn(
-						`Review for commit "${review.commit_id}" is by the author or committer`,
+						`Review ${review.id} is by the author: ${commit.author?.login}`,
+					);
+					return false;
+				}
+				if (review.user.id === commit.committer?.id) {
+					this.logger.warn(
+						`Review ${review.id} is by the committer: ${commit.committer?.login}`,
 					);
 					return false;
 				}
@@ -321,80 +326,54 @@ export class PolicyEvaluator {
 
 			// Check review state and methods
 			if (methods?.github_review) {
-				if (review.state === 'APPROVED') {
+				if (review.state.toLowerCase() === 'approved') {
+					this.logger.info(`Review ${review.id} is approved`);
 					return true;
 				}
 			}
 
-			const configValStart = new RegExp(/^!?\//);
-			const configValEnd = new RegExp(/\/i?$/);
-
-			function isRegexPattern(input: string): boolean {
-				return (
-					typeof input === 'string' &&
-					configValStart.test(input) &&
-					configValEnd.test(input)
-				);
-			}
-
-			function parseRegexMatch(input: string): RegExp | null {
-				try {
-					const regexString = input
-						.replace(configValStart, '')
-						.replace(configValEnd, '');
-					return input.endsWith('i')
-						? new RegExp(regexString, 'i')
-						: new RegExp(regexString);
-				} catch {
-					// no-op
+			function parsePattern(pattern: string): RegExp {
+				// If pattern is wrapped in forward slashes, treat as regex
+				if (pattern.startsWith('/') && pattern.match(/\/[gimuy]*$/)) {
+					const match = pattern.match(/^\/(.+)\/([gimuy]*)$/);
+					if (match) {
+						return new RegExp(match[1], match[2]);
+					}
 				}
-				return null;
+				// Otherwise treat as literal string match (case-insensitive)
+				return new RegExp(pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 			}
 
 			// Check for comment patterns
 			if (
 				methods?.github_review_comment_patterns &&
 				review.body &&
-				review.state === 'COMMENTED'
+				review.state.toLowerCase() === 'commented'
 			) {
 				return methods.github_review_comment_patterns.some((pattern) => {
-					// If pattern is wrapped in forward slashes, treat as regex
-					if (isRegexPattern(pattern)) {
-						const regex = parseRegexMatch(pattern);
-						if (!(regex instanceof RegExp)) {
-							this.logger.error(`Pattern "${pattern}" is not a valid regex`);
-							throw new Error(`Pattern "${pattern}" is not a valid regex`);
+					try {
+						const regex = parsePattern(pattern);
+						const match = regex.test(review.body ?? '');
+						if (match) {
+							this.logger.info(
+								`Review ${review.id} pattern "${pattern}" matches: ${review.body}`,
+							);
+						} else {
+							this.logger.warn(
+								`Review ${review.id} pattern "${pattern}" does not match: ${review.body}`,
+							);
 						}
-						this.logger.info(
-							`Regex pattern: ${pattern} match: ${regex.test(review.body ?? '')}`,
-						);
-						return regex.test(review.body ?? '');
+						return match;
+					} catch (error) {
+						this.logger.error(`Pattern "${pattern}" is not valid: ${error}`);
+						throw new Error(`Pattern "${pattern}" is not valid: ${error}`);
 					}
-
-					// Otherwise treat as glob pattern using minimatch
-					const re = minimatch.makeRe(pattern, {
-						matchBase: true,
-						partial: true,
-						dot: true,
-					});
-					if (!(re instanceof RegExp)) {
-						this.logger.error(`Pattern "${pattern}" is not a valid glob`);
-						throw new Error(`Pattern "${pattern}" is not a valid glob`);
-					}
-					this.logger.info(
-						`Minimatch pattern: ${pattern} match: ${re.test(review.body ?? '')}`,
-					);
-					return re.test(review.body ?? '');
 				});
 			}
 
-			this.logger.warn(
-				`Review for commit "${review.commit_id}" does not meet the requirements`,
-			);
+			this.logger.info(`Review ${review.id} does not meet the requirements`);
 			return false;
 		});
-
-		this.logger.info(`Valid reviews: ${validReviews.length}`);
 
 		// Filter by reviews that meet membership requirements
 		const reviewChecks = await Promise.all(
@@ -419,6 +398,10 @@ export class PolicyEvaluator {
 		);
 
 		const approvedReviews = validReviews.filter((_, idx) => reviewChecks[idx]);
+
+		this.logger.info(
+			`Found ${approvedReviews.length} eligible reviews per the policy requirements`,
+		);
 
 		return approvedReviews.length >= count;
 	}
@@ -452,20 +435,34 @@ export class PolicyEvaluator {
 	}
 
 	private async isUserInTeam(user: string, team: string): Promise<boolean> {
-		const [org, slug] = team.split('/');
-		const teamMembers = await listTeamMembers(this.githubContext, org, slug);
-		return teamMembers.some((member) => member.login === user);
+		try {
+			const [org, slug] = team.split('/');
+			const teamMembers = await listTeamMembers(this.githubContext, org, slug);
+			return teamMembers.some((member) => member.login === user);
+		} catch (error) {
+			this.logger.warn(
+				`Failed to check team membership for ${user} in ${team}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+			);
+			return false;
+		}
 	}
 
 	private async isUserInOrganization(
 		user: string,
 		organization: string,
 	): Promise<boolean> {
-		const organizationMembers = await listOrganizationMembers(
-			this.githubContext,
-			organization,
-		);
-		return organizationMembers.some((member) => member.login === user);
+		try {
+			const organizationMembers = await listOrganizationMembers(
+				this.githubContext,
+				organization,
+			);
+			return organizationMembers.some((member) => member.login === user);
+		} catch (error) {
+			this.logger.warn(
+				`Failed to check organization membership for ${user} in ${organization}: ${error instanceof Error ? error.message : 'Unknown error'}`,
+			);
+			return false;
+		}
 	}
 
 	/**

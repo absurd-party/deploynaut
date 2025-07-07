@@ -17,7 +17,7 @@ approval_rules:
     methods:
       github_review: true
       github_review_comment_patterns:
-        - '^/deploy'
+        - '/deploy'
   - name: has valid signatures by security-team
     if:
       # "has_valid_signatures_by" is satisfied if the commits in the pull request

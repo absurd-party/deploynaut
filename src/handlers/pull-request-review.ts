@@ -76,11 +76,22 @@ export async function handlePullRequestReviewSubmitted(
 		// If submitted_at time is not provided, use 0 so no workflows can be approved
 		const submittedAt = review.submitted_at ? new Date(review.submitted_at) : 0;
 		const createdAt = new Date(workflowRun.created_at);
-		return (
-			(workflowRun.head_sha === review.commit_id ||
-				workflowRun.event === 'pull_request_target') &&
-			new Date(createdAt.getTime() + 60 * 1000) < submittedAt
-		);
+		const isWithinTimeWindow =
+			new Date(createdAt.getTime() + 60 * 1000) < submittedAt;
+		const isValidSha =
+			workflowRun.head_sha === review.commit_id ||
+			workflowRun.event === 'pull_request_target';
+
+		if (isValidSha && !isWithinTimeWindow) {
+			context.log.warn(
+				'Workflow run %s filtered: created too close to review submission (created: %s, review: %s)',
+				workflowRun.id,
+				createdAt.toISOString(),
+				submittedAt instanceof Date ? submittedAt.toISOString() : 'invalid',
+			);
+		}
+
+		return isValidSha && isWithinTimeWindow;
 	});
 
 	await Promise.all(

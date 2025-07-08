@@ -85,12 +85,22 @@ export async function handleDeploymentProtectionRuleRequested(
 	let isApproved = await evaluator.evaluate(initialContext);
 
 	if (isApproved) {
-		context.log.info(`Deployment approved by policy`);
-		await context.octokit.request(`POST ${callbackUrl}`, {
-			environment_name: environment,
-			state: 'approved',
-			comment: `Approved by policy`,
-		});
+		context.log.info(`Deployment ${deployment.id} approved by policy`);
+		try {
+			await context.octokit.request(`POST ${callbackUrl}`, {
+				environment_name: environment,
+				state: 'approved',
+				comment: `Approved by policy`,
+			});
+		} catch (error: any) {
+			if (error.status === 422) {
+				context.log.warn(
+					'Deployment already approved, skipping duplicate approval',
+				);
+				return;
+			}
+			throw error;
+		}
 		return; // early return if the deployment is approved by the commit author or committer rules
 	}
 
@@ -138,12 +148,22 @@ export async function handleDeploymentProtectionRuleRequested(
 			// It's okay to break the for loop here because we are approving the entire deployment,
 			// not just the individual pull requests.
 			if (isApproved) {
-				context.log.info(`Deployment approved by policy`);
-				await context.octokit.request(`POST ${callbackUrl}`, {
-					environment_name: environment,
-					state: 'approved',
-					comment: `Approved by policy`,
-				});
+				context.log.info(`Deployment ${deployment.id} approved by policy`);
+				try {
+					await context.octokit.request(`POST ${callbackUrl}`, {
+						environment_name: environment,
+						state: 'approved',
+						comment: `Approved by policy`,
+					});
+				} catch (error: any) {
+					if (error.status === 422) {
+						context.log.warn(
+							'Deployment already approved, skipping duplicate approval',
+						);
+						return;
+					}
+					throw error;
+				}
 				return; // early return if the deployment is approved by the PR reviews rules
 			}
 		}

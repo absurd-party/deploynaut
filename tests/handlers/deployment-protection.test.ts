@@ -704,4 +704,129 @@ describe('Deployment Protection Rule Handler', () => {
 
 		expect(nock.pendingMocks()).toStrictEqual([]);
 	});
+
+	test('handles 422 error when deployment is already approved', async () => {
+		nock.cleanAll();
+		nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/contents/.github%2Fdeploynaut.yml')
+			.reply(200, authorApprovalFixture)
+			.post('/app/installations/12345678/access_tokens')
+			.reply(200, { token: 'test', permissions: { issues: 'write' } });
+
+		const mock = nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/commits/test-sha')
+			.reply(200, {
+				sha: 'test-sha',
+				author: { id: 123, login: 'test-bot' },
+				committer: { id: 123, login: 'test-bot' },
+				commit: {
+					verification: { verified: true, reason: 'valid' },
+				},
+			})
+			.post(
+				'/repos/test-org/test-repo/actions/runs/123/deployment_protection_rule',
+			)
+			.reply(422, {
+				message: 'There was a problem approving one of the gates',
+			});
+
+		await probot.receive({
+			name: 'deployment_protection_rule',
+			payload: testFixtures.deployment_protection_rule,
+		});
+
+		expect(mock.pendingMocks()).toStrictEqual([]);
+	});
+
+	test('handles 422 error when deployment is already approved via PR review', async () => {
+		nock.cleanAll();
+		nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/contents/.github%2Fdeploynaut.yml')
+			.reply(200, basicApprovalFixture)
+			.post('/app/installations/12345678/access_tokens')
+			.reply(200, { token: 'test', permissions: { issues: 'write' } });
+
+		const mock = nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/commits/test-sha')
+			.reply(200, {
+				sha: 'test-sha',
+				author: { id: 123, login: 'unauthorized-user' },
+				committer: { id: 123, login: 'unauthorized-user' },
+				commit: {
+					verification: { verified: false, reason: 'unsigned' },
+				},
+			})
+			.get('/repos/test-org/test-repo/pulls/1/reviews')
+			.reply(200, [
+				{
+					user: { id: 456, login: 'maintainer-user' },
+					state: 'APPROVED',
+					body: 'LGTM',
+					commit_id: 'test-sha',
+					html_url: 'https://github.com/test-org/test-repo/pull/1#review',
+					submitted_at: '2023-01-01T00:00:00Z',
+				},
+			])
+			.get('/repos/test-org/test-repo/pulls/1/commits')
+			.reply(200, [
+				{
+					sha: 'test-sha',
+					author: { id: 123, login: 'unauthorized-user' },
+				},
+			])
+			.get('/orgs/test-org/teams/test-maintainers/members')
+			.reply(200, [
+				{
+					login: 'maintainer-user',
+				},
+			])
+			.post(
+				'/repos/test-org/test-repo/actions/runs/123/deployment_protection_rule',
+			)
+			.reply(422, {
+				message: 'There was a problem approving one of the gates',
+			});
+
+		await probot.receive({
+			name: 'deployment_protection_rule',
+			payload: testFixtures.deployment_protection_rule,
+		});
+
+		expect(mock.pendingMocks()).toStrictEqual([]);
+	});
+
+	test('re-throws non-422 errors', async () => {
+		nock.cleanAll();
+		nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/contents/.github%2Fdeploynaut.yml')
+			.reply(200, authorApprovalFixture)
+			.post('/app/installations/12345678/access_tokens')
+			.reply(200, { token: 'test', permissions: { issues: 'write' } });
+
+		const mock = nock('https://api.github.com')
+			.get('/repos/test-org/test-repo/commits/test-sha')
+			.reply(200, {
+				sha: 'test-sha',
+				author: { id: 123, login: 'test-bot' },
+				committer: { id: 123, login: 'test-bot' },
+				commit: {
+					verification: { verified: true, reason: 'valid' },
+				},
+			})
+			.post(
+				'/repos/test-org/test-repo/actions/runs/123/deployment_protection_rule',
+			)
+			.reply(500, {
+				message: 'Internal server error',
+			});
+
+		await expect(
+			probot.receive({
+				name: 'deployment_protection_rule',
+				payload: testFixtures.deployment_protection_rule,
+			}),
+		).rejects.toThrow();
+
+		expect(mock.pendingMocks()).toStrictEqual([]);
+	});
 });

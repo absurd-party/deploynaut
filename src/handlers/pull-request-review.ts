@@ -145,14 +145,26 @@ export async function handlePullRequestReviewSubmitted(
 						// ],
 					});
 					if (isApproved) {
-						context.log.info(`Approved by policy`);
-						await reviewWorkflowRun(
-							context,
-							workflowRun.id,
-							environmentName,
-							'approved',
-							`Approved by policy`,
+						context.log.info(
+							`Workflow run ${workflowRun.id} approved by policy`,
 						);
+						try {
+							await reviewWorkflowRun(
+								context,
+								workflowRun.id,
+								environmentName,
+								'approved',
+								`Approved by policy`,
+							);
+						} catch (error: any) {
+							if (error.status === 422) {
+								context.log.warn(
+									'Deployment already approved, skipping duplicate approval',
+								);
+								return;
+							}
+							throw error;
+						}
 					}
 				}),
 			);

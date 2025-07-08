@@ -10,7 +10,7 @@ import {
 export async function handleDeploymentProtectionRuleRequested(
 	context: Context<'deployment_protection_rule.requested'>,
 	config: PolicyConfig,
-) {
+): Promise<void> {
 	const {
 		environment,
 		deployment,
@@ -84,14 +84,14 @@ export async function handleDeploymentProtectionRuleRequested(
 	const evaluator = new PolicyEvaluator(config, context, context.log);
 	let isApproved = await evaluator.evaluate(initialContext);
 
-	// Return early if the deployment is approved by the commit author or committer rules
 	if (isApproved) {
 		context.log.info(`Deployment approved by policy`);
-		return context.octokit.request(`POST ${callbackUrl}`, {
+		await context.octokit.request(`POST ${callbackUrl}`, {
 			environment_name: environment,
 			state: 'approved',
 			comment: `Approved by policy`,
 		});
+		return; // early return if the deployment is approved by the commit author or committer rules
 	}
 
 	// If not approved and we have pull requests, check each PR's reviews
@@ -139,22 +139,13 @@ export async function handleDeploymentProtectionRuleRequested(
 			// not just the individual pull requests.
 			if (isApproved) {
 				context.log.info(`Deployment approved by policy`);
-				return context.octokit.request(`POST ${callbackUrl}`, {
+				await context.octokit.request(`POST ${callbackUrl}`, {
 					environment_name: environment,
 					state: 'approved',
 					comment: `Approved by policy`,
 				});
+				return; // early return if the deployment is approved by the PR reviews rules
 			}
-
-			// if (isApproved) {
-			// 	// If approved, add a comment to the PR
-			// 	await createIssueComment(
-			// 		context,
-			// 		pr.number,
-			// 		'✅ This pull request has been approved according to the deployment policy.',
-			// 	);
-			// 	break;
-			// }
 		}
 	}
 }

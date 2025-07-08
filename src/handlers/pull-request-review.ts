@@ -158,13 +158,4 @@ export async function handlePullRequestReviewSubmitted(
 			);
 		}),
 	);
-
-	// // If the policy is satisfied, add a comment to the PR
-	// if (isApproved) {
-	// 	await createIssueComment(
-	// 		context,
-	// 		pull_request.number,
-	// 		'✅ This pull request has been approved according to the deployment policy.',
-	// 	);
-	// }
 }

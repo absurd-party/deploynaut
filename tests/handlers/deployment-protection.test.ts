@@ -157,7 +157,7 @@ describe('Deployment Protection Rule Handler', () => {
 		expect(mock.pendingMocks()).toStrictEqual([]);
 	});
 
-	test('approves deployment an approved maintainer review', async () => {
+	test('approves deployment with an approved maintainer review', async () => {
 		// Override the beforeEach setup to use basic-approval fixture
 		nock.cleanAll();
 		nock('https://api.github.com')

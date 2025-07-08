@@ -16,10 +16,26 @@ export async function handleDeploymentProtectionRuleRequested(
 		deployment,
 		pull_requests,
 		deployment_callback_url: callbackUrl,
+		event,
 	} = context.payload;
 
-	if (!environment || !deployment) {
+	if (!environment || !deployment || !event) {
 		context.log.error('Missing required payload data');
+		return;
+	}
+
+	if (
+		![
+			'pull_request',
+			'pull_request_target',
+			'push',
+			'workflow_dispatch',
+		].includes(event)
+	) {
+		context.log.warn(
+			'Ignoring unsupported deployment protection rule event: %s',
+			event,
+		);
 		return;
 	}
 

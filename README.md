@@ -168,6 +168,11 @@ Probot configuration variables are documented in the [Probot configuration guide
 > When deploying to production with a custom domain, set the Callback URL to include your domain + webhook path:
 > `https://your-domain.com/api/github/webhooks`
 
+## Planned
+
+- **Event Conditions**: Allow conditional rules based on the event type that triggered the deployment
+- **Policy Status Page**: Publish a deployment policy status page via PR checks
+
 ## Contributing
 
 If you have suggestions for how deploynaut could be improved, or want to report a bug, open an issue! We'd love all and any contributions.

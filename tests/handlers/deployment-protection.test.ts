@@ -50,6 +50,7 @@ interface TestFixture {
 			id: number;
 		};
 		deployment_callback_url: string;
+		event: string;
 		pull_requests: Array<{
 			// eslint-disable-next-line id-denylist
 			number: number;
@@ -80,6 +81,7 @@ const testFixtures: TestFixture = {
 		},
 		deployment_callback_url:
 			'https://api.github.com/repos/test-org/test-repo/actions/runs/123/deployment_protection_rule',
+		event: 'pull_request',
 		pull_requests: [
 			{
 				// eslint-disable-next-line id-denylist
@@ -680,5 +682,26 @@ describe('Deployment Protection Rule Handler', () => {
 		});
 
 		expect(mock.pendingMocks()).toStrictEqual([]);
+	});
+
+	test('ignores unsupported deployment event', async () => {
+		nock.cleanAll();
+		nock('https://api.github.com')
+			.post('/app/installations/12345678/access_tokens')
+			.reply(200, { token: 'test', permissions: { issues: 'write' } })
+			.get('/repos/test-org/test-repo/contents/.github%2Fdeploynaut.yml')
+			.reply(200, basicApprovalFixture);
+
+		const unsupportedEventPayload = {
+			...testFixtures.deployment_protection_rule,
+			event: 'unsupported_event',
+		};
+
+		await probot.receive({
+			name: 'deployment_protection_rule',
+			payload: unsupportedEventPayload,
+		});
+
+		expect(nock.pendingMocks()).toStrictEqual([]);
 	});
 });
